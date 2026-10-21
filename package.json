@@ -1,0 +1,25 @@
+{
+  "name": "cen3031-group7",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+  "dev": "concurrently \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\""
+  },
+
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srinz06/cen3031-group7.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/srinz06/cen3031-group7/issues"
+  },
+  "homepage": "https://github.com/srinz06/cen3031-group7#readme",
+  "devDependencies": {
+    "concurrently": "^10.0.6"
+  }
+}

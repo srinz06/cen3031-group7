@@ -156,3 +156,41 @@ app.post("/api/login", async (req: Request, res: Response) => {
 app.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
 });
+
+app.get("/api/me", async (req: Request, res: Response) => {
+  try {
+    if (!req.session.userId) {
+      return res.status(401).json({
+        message: "Not authenticated",
+      });
+    }
+
+    const user = await db.user.findUnique({
+      where: {
+        id: req.session.userId,
+      },
+    });
+
+    if (!user) {
+      return res.status(401).json({
+        message: "Not authenticated",
+      });
+    }
+
+    return res.status(200).json({
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        attributes: user.attributes,
+      },
+    });
+  } catch (error) {
+    console.error("Session check error:", error);
+
+    return res.status(500).json({
+      message: "Unable to verify session",
+    });
+  }
+});

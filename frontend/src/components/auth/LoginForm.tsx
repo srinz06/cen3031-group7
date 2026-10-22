@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -13,16 +14,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 export function LoginForm() {
+  const navigate = useNavigate();
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
-  const [success, setSuccess] = useState(false);
 
   const handleLogin = async (event: React.FormEvent) => {
     event.preventDefault();
-
     setMessage("");
-    setSuccess(false);
 
     try {
       const response = await fetch("http://localhost:3001/api/login", {
@@ -44,12 +44,10 @@ export function LoginForm() {
         return;
       }
 
-      setSuccess(true);
-      setMessage(`Welcome, ${data.user.name}!`);
+      navigate("/home", { replace: true });
     } catch (error) {
       console.error(error);
       setMessage("Unable to connect to the server");
-      setSuccess(false);
     }
   };
 
@@ -89,7 +87,7 @@ export function LoginForm() {
           </div>
 
           {message && (
-            <Alert variant={success ? "default" : "destructive"}>
+            <Alert variant="destructive">
               <AlertDescription>{message}</AlertDescription>
             </Alert>
           )}

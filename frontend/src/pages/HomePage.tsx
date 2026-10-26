@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
 import { useNavigate } from "react-router";
 import {
   Check,
   FolderKanban,
   ListTodo,
+  Plus,
   Users,
   UserRound,
+  X,
 } from "lucide-react";
 
 import {
@@ -13,6 +16,7 @@ import {
   type Task,
 } from "@/components/tasks/CreateTaskDialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Card,
   CardAction,
@@ -30,6 +34,23 @@ type User = {
   attributes: unknown;
 };
 
+type Friend = {
+  id: string;
+  name: string;
+  email: string;
+};
+
+type FriendRequest = {
+  id: string;
+  user: Friend;
+};
+
+type FriendsData = {
+  friends: Friend[];
+  incoming: FriendRequest[];
+  outgoing: FriendRequest[];
+};
+
 const formatDueDate = (dueDate: string) =>
   new Date(dueDate).toLocaleDateString(undefined, {
     month: "short",
@@ -45,6 +66,83 @@ export function HomePage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const [showAddFriend, setShowAddFriend] = useState(false);
+  const [friendEmail, setFriendEmail] = useState("");
+  const [friendMessage, setFriendMessage] = useState("");
+  const [friendError, setFriendError] = useState("");
+  const [friendsData, setFriendsData] = useState<FriendsData>({
+    friends: [],
+    incoming: [],
+    outgoing: [],
+  });
+
+  const loadFriends = async () => {
+    try {
+      const response = await fetch("http://localhost:3001/api/friends", {
+        credentials: "include",
+      });
+
+      if (response.ok) {
+        setFriendsData(await response.json());
+      }
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const handleAddFriend = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setFriendError("");
+
+    try {
+      const response = await fetch(
+        "http://localhost:3001/api/friends/requests",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ email: friendEmail }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setFriendError(data.message);
+        return;
+      }
+
+      setFriendMessage(data.message);
+      setFriendEmail("");
+      setShowAddFriend(false);
+      loadFriends();
+    } catch (error) {
+      console.error(error);
+      setFriendError("Unable to send friend request");
+    }
+  };
+
+  const respondToRequest = async (
+    requestId: string,
+    action: "accept" | "decline"
+  ) => {
+    try {
+      const response = await fetch(
+        `http://localhost:3001/api/friends/requests/${requestId}/${action}`,
+        {
+          method: "POST",
+          credentials: "include",
+        }
+      );
+
+      const data = await response.json();
+      setFriendMessage(data.message);
+      loadFriends();
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
   useEffect(() => {
     const loadUser = async () => {
       try {
@@ -59,6 +157,7 @@ export function HomePage() {
 
         const data = await response.json();
         setUser(data.user);
+        loadFriends();
 
         const tasksResponse = await fetch("http://localhost:3001/api/tasks", {
           credentials: "include",
@@ -257,12 +356,128 @@ export function HomePage() {
                 <CardDescription>
                   Connect with friends and stay accountable together.
                 </CardDescription>
+
+                <CardAction>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    aria-label={showAddFriend ? "Cancel" : "Add friend"}
+                    title={showAddFriend ? "Cancel" : "Add friend"}
+                    onClick={() => {
+                      setShowAddFriend(!showAddFriend);
+                      setFriendMessage("");
+                      setFriendError("");
+                    }}
+                  >
+                    {showAddFriend ? <X /> : <Plus />}
+                  </Button>
+                </CardAction>
               </CardHeader>
 
-              <CardContent>
-                <p className="text-sm text-muted-foreground">
-                  Your friend activity will appear here.
-                </p>
+              <CardContent className="space-y-4">
+                {showAddFriend && (
+                  <form onSubmit={handleAddFriend} className="space-y-2">
+                    <div className="flex gap-2">
+                      <Input
+                        type="email"
+                        placeholder="Friend's email"
+                        value={friendEmail}
+                        onChange={(event) => setFriendEmail(event.target.value)}
+                        required
+                        autoFocus
+                      />
+                      <Button type="submit">Add</Button>
+                    </div>
+
+                    {friendError && (
+                      <p className="text-sm text-destructive">{friendError}</p>
+                    )}
+                  </form>
+                )}
+
+                {friendMessage && (
+                  <p className="text-sm text-muted-foreground">
+                    {friendMessage}
+                  </p>
+                )}
+
+                {friendsData.incoming.length > 0 && (
+                  <div>
+                    <p className="mb-2 text-xs font-medium text-muted-foreground">
+                      FRIEND REQUESTS
+                    </p>
+
+                    <ul className="space-y-2">
+                      {friendsData.incoming.map((request) => (
+                        <li
+                          key={request.id}
+                          className="flex items-center justify-between gap-2"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium">
+                              {request.user.name}
+                            </p>
+                            <p className="truncate text-xs text-muted-foreground">
+                              {request.user.email}
+                            </p>
+                          </div>
+
+                          <div className="flex gap-1">
+                            <Button
+                              size="icon-sm"
+                              aria-label="Accept"
+                              title="Accept"
+                              onClick={() =>
+                                respondToRequest(request.id, "accept")
+                              }
+                            >
+                              <Check />
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="icon-sm"
+                              aria-label="Decline"
+                              title="Decline"
+                              onClick={() =>
+                                respondToRequest(request.id, "decline")
+                              }
+                            >
+                              <X />
+                            </Button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {friendsData.friends.length > 0 ? (
+                  <ul className="space-y-2">
+                    {friendsData.friends.map((friend) => (
+                      <li key={friend.id} className="min-w-0">
+                        <p className="truncate text-sm font-medium">
+                          {friend.name}
+                        </p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {friend.email}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    No friends yet. Click + to add someone by email.
+                  </p>
+                )}
+
+                {friendsData.outgoing.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Pending:{" "}
+                    {friendsData.outgoing
+                      .map((request) => request.user.name)
+                      .join(", ")}
+                  </p>
+                )}
               </CardContent>
             </Card>
           </div>

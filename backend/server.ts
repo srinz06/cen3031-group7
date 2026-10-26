@@ -153,6 +153,234 @@ app.post("/api/login", async (req: Request, res: Response) => {
   }
 });
 
+const publicUser = (user: { id: string; name: string; email: string }) => ({
+  id: user.id,
+  name: user.name,
+  email: user.email,
+});
+
+app.get("/api/friends", async (req: Request, res: Response) => {
+  try {
+    const userId = req.session.userId;
+
+    if (!userId) {
+      return res.status(401).json({
+        message: "Not authenticated",
+      });
+    }
+
+    const requests = await db.friendRequest.findMany({
+      where: {
+        OR: [{ senderId: userId }, { receiverId: userId }],
+        status: { in: ["pending", "accepted"] },
+      },
+      include: {
+        sender: true,
+        receiver: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    const friends = requests
+      .filter((request) => request.status === "accepted")
+      .map((request) =>
+        publicUser(
+          request.senderId === userId ? request.receiver : request.sender
+        )
+      );
+
+    const incoming = requests
+      .filter(
+        (request) =>
+          request.status === "pending" && request.receiverId === userId
+      )
+      .map((request) => ({
+        id: request.id,
+        user: publicUser(request.sender),
+      }));
+
+    const outgoing = requests
+      .filter(
+        (request) => request.status === "pending" && request.senderId === userId
+      )
+      .map((request) => ({
+        id: request.id,
+        user: publicUser(request.receiver),
+      }));
+
+    return res.status(200).json({ friends, incoming, outgoing });
+  } catch (error) {
+    console.error("Friends list error:", error);
+
+    return res.status(500).json({
+      message: "Unable to load friends",
+    });
+  }
+});
+
+app.post("/api/friends/requests", async (req: Request, res: Response) => {
+  try {
+    const userId = req.session.userId;
+
+    if (!userId) {
+      return res.status(401).json({
+        message: "Not authenticated",
+      });
+    }
+
+    const { email } = req.body;
+
+    const normalizedEmail =
+      typeof email === "string" ? email.trim().toLowerCase() : "";
+
+    if (!normalizedEmail) {
+      return res.status(400).json({
+        message: "Email is required",
+      });
+    }
+
+    const receiver = await db.user.findUnique({
+      where: {
+        email: normalizedEmail,
+      },
+    });
+
+    if (!receiver) {
+      return res.status(404).json({
+        message: "No user with that email exists",
+      });
+    }
+
+    if (receiver.id === userId) {
+      return res.status(400).json({
+        message: "You can't add yourself as a friend",
+      });
+    }
+
+    const existing = await db.friendRequest.findFirst({
+      where: {
+        OR: [
+          { senderId: userId, receiverId: receiver.id },
+          { senderId: receiver.id, receiverId: userId },
+        ],
+      },
+    });
+
+    if (existing?.status === "accepted") {
+      return res.status(409).json({
+        message: `You're already friends with ${receiver.name}`,
+      });
+    }
+
+    if (existing?.status === "pending" && existing.senderId === userId) {
+      return res.status(409).json({
+        message: `You already sent ${receiver.name} a friend request`,
+      });
+    }
+
+    // They already invited us, so adding them back accepts it.
+    if (existing?.status === "pending") {
+      await db.friendRequest.update({
+        where: { id: existing.id },
+        data: { status: "accepted" },
+      });
+
+      return res.status(200).json({
+        message: `You and ${receiver.name} are now friends`,
+      });
+    }
+
+    // A declined request can be sent again.
+    if (existing) {
+      await db.friendRequest.update({
+        where: { id: existing.id },
+        data: {
+          status: "pending",
+          senderId: userId,
+          receiverId: receiver.id,
+          createdAt: new Date(),
+        },
+      });
+    } else {
+      await db.friendRequest.create({
+        data: {
+          senderId: userId,
+          receiverId: receiver.id,
+        },
+      });
+    }
+
+    return res.status(201).json({
+      message: `Friend request sent to ${receiver.name}`,
+    });
+  } catch (error) {
+    console.error("Friend request error:", error);
+
+    return res.status(500).json({
+      message: "Unable to send friend request",
+    });
+  }
+});
+
+app.post(
+  "/api/friends/requests/:id/:action",
+  async (req: Request, res: Response) => {
+    try {
+      const userId = req.session.userId;
+
+      if (!userId) {
+        return res.status(401).json({
+          message: "Not authenticated",
+        });
+      }
+
+      const { id, action } = req.params;
+
+      if (action !== "accept" && action !== "decline") {
+        return res.status(400).json({
+          message: "Action must be accept or decline",
+        });
+      }
+
+      const request = await db.friendRequest.findUnique({
+        where: {
+          id: String(id),
+        },
+      });
+
+      if (
+        !request ||
+        request.receiverId !== userId ||
+        request.status !== "pending"
+      ) {
+        return res.status(404).json({
+          message: "Friend request not found",
+        });
+      }
+
+      await db.friendRequest.update({
+        where: { id: request.id },
+        data: { status: action === "accept" ? "accepted" : "declined" },
+      });
+
+      return res.status(200).json({
+        message:
+          action === "accept"
+            ? "Friend request accepted"
+            : "Friend request declined",
+      });
+    } catch (error) {
+      console.error("Friend request response error:", error);
+
+      return res.status(500).json({
+        message: "Unable to update friend request",
+      });
+    }
+  }
+);
+
 app.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
 });

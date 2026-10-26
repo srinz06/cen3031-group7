@@ -14,7 +14,6 @@
     "generate": "prisma generate",
     "postinstall": "prisma generate"
   },
-
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",
     "@types/cors": "^2.8.19",
@@ -26,5 +25,10 @@
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   },
-  "type": "module"
+  "type": "module",
+  "allowScripts": {
+    "bcrypt@6.0.0": true,
+    "esbuild@0.28.2": true,
+    "prisma@7.10.1": true
+  }
 }

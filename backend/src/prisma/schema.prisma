@@ -15,4 +15,19 @@ model User {
   passwordHash String
   role         String   @default("user")
   attributes   Json     @default("{}") @db.JsonB
+  tasks        Task[]
+}
+
+model Task {
+  id          String    @id @default(uuid()) @db.Uuid
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  title       String
+  description String?
+  dueDate     DateTime? @db.Date
+  priority    String    @default("medium")
+  completedAt DateTime? @db.Timestamptz(6)
+  userId      String    @db.Uuid
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }

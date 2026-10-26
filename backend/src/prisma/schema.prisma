@@ -28,6 +28,7 @@ model Task {
   completedAt DateTime? @db.Timestamptz(6)
   userId      String    @db.Uuid
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attributes  Json      @default("{}") @db.JsonB
 
   @@index([userId])
 }

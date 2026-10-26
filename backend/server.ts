@@ -194,3 +194,147 @@ app.get("/api/me", async (req: Request, res: Response) => {
     });
   }
 });
+const TASK_PRIORITIES = ["low", "medium", "high"];
+
+app.get("/api/tasks", async (req: Request, res: Response) => {
+  try {
+    if (!req.session.userId) {
+      return res.status(401).json({
+        message: "Not authenticated",
+      });
+    }
+
+    const tasks = await db.task.findMany({
+      where: {
+        userId: req.session.userId,
+        completedAt: null,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    return res.status(200).json({
+      tasks,
+    });
+  } catch (error) {
+    console.error("Task list error:", error);
+
+    return res.status(500).json({
+      message: "Unable to load tasks",
+    });
+  }
+});
+
+app.post("/api/tasks", async (req: Request, res: Response) => {
+  try {
+    if (!req.session.userId) {
+      return res.status(401).json({
+        message: "Not authenticated",
+      });
+    }
+
+    const { title, description, dueDate, priority } = req.body;
+
+    const trimmedTitle = typeof title === "string" ? title.trim() : "";
+
+    if (!trimmedTitle) {
+      return res.status(400).json({
+        message: "Task title is required",
+      });
+    }
+
+    const taskPriority = priority || "medium";
+
+    if (!TASK_PRIORITIES.includes(taskPriority)) {
+      return res.status(400).json({
+        message: "Priority must be low, medium, or high",
+      });
+    }
+
+    let taskDueDate: Date | null = null;
+
+    if (dueDate) {
+      taskDueDate = new Date(dueDate);
+
+      if (Number.isNaN(taskDueDate.getTime())) {
+        return res.status(400).json({
+          message: "Due date is invalid",
+        });
+      }
+    }
+
+    const trimmedDescription =
+      typeof description === "string" ? description.trim() : "";
+
+    const task = await db.task.create({
+      data: {
+        title: trimmedTitle,
+        description: trimmedDescription || null,
+        dueDate: taskDueDate,
+        priority: taskPriority,
+        userId: req.session.userId,
+      },
+    });
+
+    return res.status(201).json({
+      message: "Task created successfully",
+      task,
+    });
+  } catch (error) {
+    console.error("Task creation error:", error);
+
+    return res.status(500).json({
+      message: "Unable to create task",
+    });
+  }
+});
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+app.patch(
+  "/api/tasks/:id/complete",
+  async (req: Request<{ id: string }>, res: Response) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({
+          message: "Not authenticated",
+        });
+      }
+
+      if (!UUID_PATTERN.test(req.params.id)) {
+        return res.status(404).json({
+          message: "Task not found",
+        });
+      }
+
+      const result = await db.task.updateMany({
+        where: {
+          id: req.params.id,
+          userId: req.session.userId,
+          completedAt: null,
+        },
+        data: {
+          completedAt: new Date(),
+        },
+      });
+
+      if (result.count === 0) {
+        return res.status(404).json({
+          message: "Task not found",
+        });
+      }
+
+      return res.status(200).json({
+        message: "Task completed",
+      });
+    } catch (error) {
+      console.error("Task completion error:", error);
+
+      return res.status(500).json({
+        message: "Unable to complete task",
+      });
+    }
+  }
+);

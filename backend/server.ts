@@ -3,6 +3,7 @@ import cors from "cors";
 import bcrypt from "bcrypt";
 import session from "express-session";
 import { db } from "./src/prisma/db.js";
+import { validateProjectInput } from "./src/projects/validation.js";
 
 declare module "express-session" {
   interface SessionData {
@@ -153,10 +154,6 @@ app.post("/api/login", async (req: Request, res: Response) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Backend running on http://localhost:${PORT}`);
-});
-
 app.get("/api/me", async (req: Request, res: Response) => {
   try {
     if (!req.session.userId) {
@@ -193,4 +190,61 @@ app.get("/api/me", async (req: Request, res: Response) => {
       message: "Unable to verify session",
     });
   }
+});
+
+app.get("/api/projects", async (req: Request, res: Response) => {
+  if (!req.session.userId) {
+    return res.status(401).json({ message: "Not authenticated" });
+  }
+
+  try {
+    const projects = await db.project.findMany({
+      where: { ownerId: req.session.userId },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    });
+
+    return res.json({ projects });
+  } catch (error) {
+    console.error("Project list error:", error);
+    return res.status(500).json({ message: "Unable to load projects" });
+  }
+});
+
+app.post("/api/projects", async (req: Request, res: Response) => {
+  if (!req.session.userId) {
+    return res.status(401).json({ message: "Not authenticated" });
+  }
+
+  const result = validateProjectInput(req.body);
+
+  if (result.error !== undefined) {
+    return res.status(400).json({ message: result.error });
+  }
+
+  try {
+    const owner = await db.user.findUnique({
+      where: { id: req.session.userId },
+      select: { id: true },
+    });
+
+    if (!owner) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+
+    const project = await db.project.create({
+      data: {
+        ...result.data,
+        ownerId: owner.id,
+      },
+    });
+
+    return res.status(201).json({ message: "Project created successfully", project });
+  } catch (error) {
+    console.error("Project creation error:", error);
+    return res.status(500).json({ message: "Unable to create project" });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`Backend running on http://localhost:${PORT}`);
 });

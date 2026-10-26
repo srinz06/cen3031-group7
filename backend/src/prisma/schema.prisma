@@ -8,11 +8,25 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(uuid()) @db.Uuid
-  createdAt    DateTime @default(now()) @db.Timestamptz(6)
-  email        String   @unique
+  id           String    @id @default(uuid()) @db.Uuid
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  email        String    @unique
   name         String
   passwordHash String
-  role         String   @default("user")
-  attributes   Json     @default("{}") @db.JsonB
+  role         String    @default("user")
+  attributes   Json      @default("{}") @db.JsonB
+  projects     Project[]
+}
+
+model Project {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String    @db.VarChar(100)
+  description String    @default("") @db.VarChar(2000)
+  goal        String    @default("") @db.VarChar(2000)
+  targetDate  DateTime? @db.Date
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  ownerId     String    @db.Uuid
+  owner       User      @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+
+  @@index([ownerId])
 }

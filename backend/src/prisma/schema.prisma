@@ -16,6 +16,9 @@ model User {
   role         String   @default("user")
   attributes   Json     @default("{}") @db.JsonB
   tasks        Task[]
+
+  sentFriendRequests     FriendRequest[] @relation("SentFriendRequests")
+  receivedFriendRequests FriendRequest[] @relation("ReceivedFriendRequests")
 }
 
 model Task {
@@ -31,4 +34,20 @@ model Task {
   attributes  Json      @default("{}") @db.JsonB
 
   @@index([userId])
+}
+
+// status is "pending", "accepted", or "declined".
+// An accepted request means the two users are friends.
+model FriendRequest {
+  id         String   @id @default(uuid()) @db.Uuid
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+  status     String   @default("pending")
+  senderId   String   @db.Uuid
+  sender     User     @relation("SentFriendRequests", fields: [senderId], references: [id], onDelete: Cascade)
+  receiverId String   @db.Uuid
+  receiver   User     @relation("ReceivedFriendRequests", fields: [receiverId], references: [id], onDelete: Cascade)
+  attributes Json     @default("{}") @db.JsonB
+
+  @@unique([senderId, receiverId])
+  @@index([receiverId])
 }

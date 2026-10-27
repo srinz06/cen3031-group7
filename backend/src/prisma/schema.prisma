@@ -8,17 +8,17 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(uuid()) @db.Uuid
-  createdAt    DateTime @default(now()) @db.Timestamptz(6)
-  email        String   @unique
-  name         String
-  passwordHash String
-  role         String   @default("user")
-  attributes   Json     @default("{}") @db.JsonB
-  tasks        Task[]
-
-  sentFriendRequests     FriendRequest[] @relation("SentFriendRequests")
-  receivedFriendRequests FriendRequest[] @relation("ReceivedFriendRequests")
+  id                     String          @id @default(uuid()) @db.Uuid
+  createdAt              DateTime        @default(now()) @db.Timestamptz(6)
+  email                  String          @unique
+  name                   String
+  passwordHash           String
+  role                    String          @default("user")
+  attributes              Json            @default("{}") @db.JsonB
+  tasks                   Task[]
+  projects                Project[]
+  sentFriendRequests      FriendRequest[] @relation("SentFriendRequests")
+  receivedFriendRequests  FriendRequest[] @relation("ReceivedFriendRequests")
 }
 
 model Task {
@@ -36,8 +36,20 @@ model Task {
   @@index([userId])
 }
 
-// status is "pending", "accepted", or "declined".
-// An accepted request means the two users are friends.
+model Project {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String    @db.VarChar(100)
+  description String    @default("") @db.VarChar(2000)
+  goal        String    @default("") @db.VarChar(2000)
+  targetDate  DateTime? @db.Date
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  ownerId     String    @db.Uuid
+  owner       User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  attributes  Json      @default("{}") @db.JsonB
+
+  @@index([ownerId])
+}
+
 model FriendRequest {
   id         String   @id @default(uuid()) @db.Uuid
   createdAt  DateTime @default(now()) @db.Timestamptz(6)

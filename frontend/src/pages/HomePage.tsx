@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import {
   Check,
   FolderKanban,
@@ -15,8 +15,8 @@ import {
   CreateTaskDialog,
   type Task,
 } from "@/components/tasks/CreateTaskDialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Card,
   CardAction,
@@ -25,6 +25,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 
 type User = {
   id: string;
@@ -32,6 +33,14 @@ type User = {
   email: string;
   role: string;
   attributes: unknown;
+};
+
+type Project = {
+  id: string;
+  name: string;
+  description: string;
+  goal: string;
+  targetDate: string | null;
 };
 
 type Friend = {
@@ -64,12 +73,15 @@ export function HomePage() {
 
   const [user, setUser] = useState<User | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectsError, setProjectsError] = useState("");
   const [loading, setLoading] = useState(true);
 
   const [showAddFriend, setShowAddFriend] = useState(false);
   const [friendEmail, setFriendEmail] = useState("");
   const [friendMessage, setFriendMessage] = useState("");
   const [friendError, setFriendError] = useState("");
+
   const [friendsData, setFriendsData] = useState<FriendsData>({
     friends: [],
     incoming: [],
@@ -90,18 +102,44 @@ export function HomePage() {
     }
   };
 
+  const loadProjects = async () => {
+    try {
+      const response = await fetch("http://localhost:3001/api/projects", {
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        setProjectsError("Unable to load projects. Please refresh to try again.");
+        return;
+      }
+
+      const data = await response.json();
+      setProjects(data.projects);
+      setProjectsError("");
+    } catch (error) {
+      console.error(error);
+      setProjectsError("Unable to connect to the server to load projects.");
+    }
+  };
+
   const handleAddFriend = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
     setFriendError("");
+    setFriendMessage("");
 
     try {
       const response = await fetch(
         "http://localhost:3001/api/friends/requests",
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+          },
           credentials: "include",
-          body: JSON.stringify({ email: friendEmail }),
+          body: JSON.stringify({
+            email: friendEmail,
+          }),
         }
       );
 
@@ -136,6 +174,12 @@ export function HomePage() {
       );
 
       const data = await response.json();
+
+      if (!response.ok) {
+        setFriendMessage(data.message);
+        return;
+      }
+
       setFriendMessage(data.message);
       loadFriends();
     } catch (error) {
@@ -157,7 +201,8 @@ export function HomePage() {
 
         const data = await response.json();
         setUser(data.user);
-        loadFriends();
+
+        await Promise.all([loadFriends(), loadProjects()]);
 
         const tasksResponse = await fetch("http://localhost:3001/api/tasks", {
           credentials: "include",
@@ -269,8 +314,19 @@ export function HomePage() {
 
               <CardContent>
                 <p className="text-sm text-muted-foreground">
-                  Your project activity will appear here.
+                  {projects.length === 0
+                    ? "Start by creating your first project."
+                    : `${projects.length} ${
+                        projects.length === 1 ? "project" : "projects"
+                      } in your workspace.`}
                 </p>
+
+                <Link
+                  to="/projects/new"
+                  className={buttonVariants({ className: "mt-4" })}
+                >
+                  Create project
+                </Link>
               </CardContent>
             </Card>
 
@@ -321,6 +377,7 @@ export function HomePage() {
                         <div className="min-w-0 flex-1">
                           <div className="flex items-start justify-between gap-2">
                             <p className="text-sm font-medium">{task.title}</p>
+
                             <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs capitalize text-muted-foreground">
                               {task.priority}
                             </span>
@@ -390,7 +447,9 @@ export function HomePage() {
                     </div>
 
                     {friendError && (
-                      <p className="text-sm text-destructive">{friendError}</p>
+                      <p className="text-sm text-destructive">
+                        {friendError}
+                      </p>
                     )}
                   </form>
                 )}
@@ -433,6 +492,7 @@ export function HomePage() {
                             >
                               <Check />
                             </Button>
+
                             <Button
                               variant="outline"
                               size="icon-sm"
@@ -481,6 +541,60 @@ export function HomePage() {
               </CardContent>
             </Card>
           </div>
+        </section>
+
+        <section className="mt-8" aria-labelledby="projects-heading">
+          <h3 id="projects-heading" className="mb-4 text-lg font-semibold">
+            Your projects
+          </h3>
+
+          {projectsError ? (
+            <Alert variant="destructive">
+              <AlertDescription>{projectsError}</AlertDescription>
+            </Alert>
+          ) : projects.length === 0 ? (
+            <p className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+              No projects yet. Create a project to start organizing your work.
+            </p>
+          ) : (
+            <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+              {projects.map((project) => (
+                <Card key={project.id}>
+                  <CardHeader>
+                    <CardTitle className="break-words">
+                      {project.name}
+                    </CardTitle>
+
+                    <CardDescription className="whitespace-pre-wrap break-words">
+                      {project.description || "No description yet."}
+                    </CardDescription>
+                  </CardHeader>
+
+                  <CardContent className="space-y-3">
+                    {project.goal && (
+                      <p className="whitespace-pre-wrap break-words text-sm">
+                        <span className="font-medium">Goal: </span>
+                        {project.goal}
+                      </p>
+                    )}
+
+                    <p className="text-sm text-muted-foreground">
+                      {project.targetDate
+                        ? `Target: ${new Date(
+                            project.targetDate
+                          ).toLocaleDateString(undefined, {
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                            timeZone: "UTC",
+                          })}`
+                        : "No target date"}
+                    </p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
         </section>
 
         <section className="mt-8">

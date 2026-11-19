@@ -161,6 +161,13 @@ test("a collaborator's default task list stays limited to their own tasks", asyn
   assert.deepEqual(response.body.tasks.map((task) => task.id), ["collab-task"]);
 });
 
+test("the default task list only includes projects the user can still open", async () => {
+  await request("get", "/api/tasks", { userId: collaboratorId });
+  assert.deepEqual(db.task.findMany.mock.calls[0].arguments[0].where.project, {
+    OR: [{ ownerId: collaboratorId }, { collaborators: { some: { userId: collaboratorId } } }],
+  });
+});
+
 test("a collaborator can create tasks in a shared project as themselves", async () => {
   const response = await request("post", "/api/tasks", {
     userId: collaboratorId, body: { projectId, title: "Draft slides", userId: ownerId },

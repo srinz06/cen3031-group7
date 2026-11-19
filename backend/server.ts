@@ -767,10 +767,13 @@ app.get("/api/tasks", async (req: Request, res: Response) => {
     }
 
     // A project view shows everyone's tasks in that project; the default
-    // view is the user's own tasks across projects.
+    // view is the user's own tasks in projects they can still open, so
+    // tasks left behind in a project they left don't linger.
     const tasks = await db.task.findMany({
       where: {
-        ...(typeof projectId === "string" ? { projectId } : { userId: req.session.userId }),
+        ...(typeof projectId === "string"
+          ? { projectId }
+          : { userId: req.session.userId, project: accessibleProjectWhere(req.session.userId) }),
         ...(includeCompleted === "true" ? {} : { completedAt: null }),
       },
       ...(typeof projectId === "string"

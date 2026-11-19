@@ -9,3 +9,17 @@ export function findOwnedProject(projectId: string, userId: string) {
     select: { id: true },
   });
 }
+
+// The owner or any collaborator can open a project and add tasks to it.
+export function accessibleProjectWhere(userId: string) {
+  return {
+    OR: [{ ownerId: userId }, { collaborators: { some: { userId } } }],
+  };
+}
+
+export function findAccessibleProject(projectId: string, userId: string) {
+  return db.project.findFirst({
+    where: { id: projectId, ...accessibleProjectWhere(userId) },
+    select: { id: true, ownerId: true },
+  });
+}

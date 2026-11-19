@@ -4,4 +4,12 @@ export type Project = {
   description: string;
   goal: string;
   targetDate: string | null;
+  ownerId?: string;
+  owner?: { id: string; name: string };
+};
+
+export type ProjectMember = {
+  id: string;
+  name: string;
+  email: string;
 };

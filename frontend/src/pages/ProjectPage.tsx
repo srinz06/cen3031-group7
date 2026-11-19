@@ -4,11 +4,12 @@ import { ArrowLeft, CalendarDays, Check, Circle, FolderKanban, ListTodo, LoaderC
 import { GoalSyncBrand } from "@/components/GoalSyncBrand";
 import { EditProjectDialog } from "@/components/projects/EditProjectDialog";
 import { DeleteProjectDialog } from "@/components/projects/DeleteProjectDialog";
+import { ProjectCollaborators } from "@/components/projects/ProjectCollaborators";
 import { CreateTaskDialog, type Task } from "@/components/tasks/CreateTaskDialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import type { Project } from "@/types/project";
+import type { Project, ProjectMember } from "@/types/project";
 
 const formatDate = (value: string) => new Date(value).toLocaleDateString(undefined, {
   month: "short", day: "numeric", year: "numeric", timeZone: "UTC",
@@ -22,6 +23,10 @@ export function ProjectPage() {
 function ProjectWorkspace({ projectId }: { projectId: string | undefined }) {
   const navigate = useNavigate();
   const [project, setProject] = useState<Project | null>(null);
+  const [isOwner, setIsOwner] = useState(false);
+  const [viewerId, setViewerId] = useState("");
+  const [owner, setOwner] = useState<ProjectMember | null>(null);
+  const [collaborators, setCollaborators] = useState<ProjectMember[]>([]);
   const [projectSaved, setProjectSaved] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,6 +70,10 @@ function ProjectWorkspace({ projectId }: { projectId: string | undefined }) {
         const data = await response.json();
         if (controller.signal.aborted) return;
         setProject(data.project);
+        setIsOwner(data.isOwner);
+        setViewerId(data.viewerId);
+        setOwner(data.owner);
+        setCollaborators(data.collaborators);
 
         try {
           const tasksResponse = await fetch(`http://localhost:3001/api/tasks?projectId=${encodeURIComponent(projectId)}&includeCompleted=true`, {
@@ -119,7 +128,7 @@ function ProjectWorkspace({ projectId }: { projectId: string | undefined }) {
         setActionError(data.message || "Unable to update this task's status. Please try again.");
         return;
       }
-      setTasks((current) => current.map((item) => item.id === task.id ? data.task : item));
+      setTasks((current) => current.map((item) => item.id === task.id ? { ...item, ...data.task } : item));
       setNotice(`${status === "complete" ? "Completed" : "Moved to to do"}: ${task.title}`);
     } catch {
       setActionError("Unable to connect to the server to update this task's status.");
@@ -165,10 +174,14 @@ function ProjectWorkspace({ projectId }: { projectId: string | undefined }) {
             <section className="workspace-banner mb-8 rounded-2xl border bg-card p-6 sm:p-8">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <p className="flex items-center gap-2 text-xs font-semibold tracking-[0.16em] text-primary"><FolderKanban className="size-4" aria-hidden="true" /> PROJECT WORKSPACE</p>
-                <EditProjectDialog project={project} onProjectUpdated={(updated) => {
-                  setProject(updated);
-                  setProjectSaved(true);
-                }} />
+                {isOwner ? (
+                  <EditProjectDialog project={project} onProjectUpdated={(updated) => {
+                    setProject(updated);
+                    setProjectSaved(true);
+                  }} />
+                ) : owner && (
+                  <span className="rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary">Shared by {owner.name}</span>
+                )}
               </div>
               <h1 className="mt-3 break-words text-3xl font-semibold tracking-tight sm:text-4xl">{project.name}</h1>
               <p className="mt-4 max-w-3xl whitespace-pre-wrap break-words leading-relaxed text-muted-foreground">{project.description || "No description yet."}</p>
@@ -182,7 +195,7 @@ function ProjectWorkspace({ projectId }: { projectId: string | undefined }) {
                     <div className="flex flex-wrap items-center justify-between gap-4">
                       <CardTitle><h2 id="project-tasks-heading" className="flex items-center gap-2"><ListTodo className="size-5 text-primary" aria-hidden="true" /> Tasks {!tasksError && <span className="rounded-md bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground">{tasks.length}</span>}</h2></CardTitle>
                       <CreateTaskDialog projectId={project.id} onTaskCreated={(task) => {
-                        setTasks((current) => [task, ...current]);
+                        setTasks((current) => [{ ...task, user: { id: viewerId, name: "" } }, ...current]);
                         setNotice(`Created: ${task.title}`);
                         setActionError("");
                       }} />
@@ -217,6 +230,12 @@ function ProjectWorkspace({ projectId }: { projectId: string | undefined }) {
                               </div>
                               {task.description && <p className="mt-2 whitespace-pre-wrap break-words text-sm text-muted-foreground">{task.description}</p>}
                               {task.dueDate && <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground"><CalendarDays className="size-3.5 shrink-0" aria-hidden="true" /> Due {formatDate(task.dueDate)}</p>}
+                              {collaborators.length > 0 && task.user && (
+                                <p className="mt-2 text-xs text-muted-foreground">Added by {task.userId === viewerId ? "you" : task.user.name}</p>
+                              )}
+                              {task.userId !== viewerId ? (
+                                <p className="mt-3 text-xs text-muted-foreground">Status: {task.completedAt ? "Complete" : "To do"}</p>
+                              ) : (
                               <div className="mt-3 flex flex-wrap items-center gap-2">
                                 <label htmlFor={`task-status-${task.id}`} className="text-xs font-medium text-muted-foreground">Status</label>
                                 <select
@@ -231,6 +250,7 @@ function ProjectWorkspace({ projectId }: { projectId: string | undefined }) {
                                   <option value="complete">Complete</option>
                                 </select>
                               </div>
+                              )}
                             </div>
                           </li>
                         ))}
@@ -254,13 +274,28 @@ function ProjectWorkspace({ projectId }: { projectId: string | undefined }) {
                     </div>
                   </CardContent>
                 </Card>
-                <Card className="border-destructive/30">
-                  <CardHeader>
-                    <CardTitle>Delete project</CardTitle>
-                    <CardDescription>Permanently remove this project and all its tasks.</CardDescription>
-                  </CardHeader>
-                  <CardContent><DeleteProjectDialog project={project} /></CardContent>
-                </Card>
+                {owner && (
+                  <div className="mt-6">
+                    <ProjectCollaborators
+                      projectId={project.id}
+                      isOwner={isOwner}
+                      viewerId={viewerId}
+                      owner={owner}
+                      collaborators={collaborators}
+                      onCollaboratorsChange={setCollaborators}
+                      onLeft={() => navigate("/home", { replace: true })}
+                    />
+                  </div>
+                )}
+                {isOwner && (
+                  <Card className="mt-6 border-destructive/30">
+                    <CardHeader>
+                      <CardTitle>Delete project</CardTitle>
+                      <CardDescription>Permanently remove this project and all its tasks.</CardDescription>
+                    </CardHeader>
+                    <CardContent><DeleteProjectDialog project={project} /></CardContent>
+                  </Card>
+                )}
               </aside>
             </div>
           </>

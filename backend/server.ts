@@ -720,6 +720,35 @@ app.get("/api/me", async (req: Request, res: Response) => {
     });
   }
 });
+app.patch("/api/me", async (req: Request, res: Response) => {
+  if (!req.session.userId) {
+    return res.status(401).json({ message: "Not authenticated" });
+  }
+
+  const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+  if (!name) {
+    return res.status(400).json({ message: "Name is required" });
+  }
+  if (name.length > 100) {
+    return res.status(400).json({ message: "Name must be 100 characters or fewer" });
+  }
+
+  try {
+    const user = await db.user.update({
+      where: { id: req.session.userId },
+      data: { name },
+      select: { id: true, name: true, email: true, role: true, attributes: true },
+    });
+    return res.status(200).json({ message: "Name updated", user });
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "P2025") {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    console.error("Profile update error:", error);
+    return res.status(500).json({ message: "Unable to update name" });
+  }
+});
+
 const adminUserSelect = { id: true, name: true, email: true, role: true, createdAt: true } as const;
 
 app.get("/api/admin/users", requireAdmin, async (_req: Request, res: Response) => {

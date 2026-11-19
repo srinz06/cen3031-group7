@@ -512,6 +512,30 @@ app.put("/api/projects/:id", async (req: Request<{ id: string }>, res: Response)
   }
 });
 
+app.delete("/api/projects/:id", async (req: Request<{ id: string }>, res: Response) => {
+  if (!req.session.userId) {
+    return res.status(401).json({ message: "Not authenticated" });
+  }
+
+  if (!UUID_PATTERN.test(req.params.id)) {
+    return res.status(404).json({ message: "Project not found" });
+  }
+
+  try {
+    // The database cascades this deletion to the project's tasks.
+    await db.project.delete({
+      where: { id: req.params.id, ownerId: req.session.userId },
+    });
+    return res.status(204).end();
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "P2025") {
+      return res.status(404).json({ message: "Project not found" });
+    }
+    console.error("Project deletion error:", error);
+    return res.status(500).json({ message: "Unable to delete project" });
+  }
+});
+
 // Only the owner can add collaborators, and only from their accepted friends.
 app.post("/api/projects/:id/collaborators", async (req: Request<{ id: string }>, res: Response) => {
   const viewerId = req.session.userId;

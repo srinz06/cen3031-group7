@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { ArrowLeft, CalendarDays, Check, Circle, FolderKanban, ListTodo, LoaderCircle, Target } from "lucide-react";
 import { GoalSyncBrand } from "@/components/GoalSyncBrand";
 import { EditProjectDialog } from "@/components/projects/EditProjectDialog";
+import { DeleteProjectDialog } from "@/components/projects/DeleteProjectDialog";
 import { ProjectCollaborators } from "@/components/projects/ProjectCollaborators";
 import { CreateTaskDialog, type Task } from "@/components/tasks/CreateTaskDialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -259,7 +260,7 @@ function ProjectWorkspace({ projectId }: { projectId: string | undefined }) {
                 </Card>
               </section>
 
-              <aside aria-label="Project details">
+              <aside aria-label="Project details" className="space-y-6">
                 <Card>
                   <CardHeader><CardTitle>Project details</CardTitle></CardHeader>
                   <CardContent className="space-y-6">
@@ -285,6 +286,15 @@ function ProjectWorkspace({ projectId }: { projectId: string | undefined }) {
                       onLeft={() => navigate("/home", { replace: true })}
                     />
                   </div>
+                )}
+                {isOwner && (
+                  <Card className="mt-6 border-destructive/30">
+                    <CardHeader>
+                      <CardTitle>Delete project</CardTitle>
+                      <CardDescription>Permanently remove this project and all its tasks.</CardDescription>
+                    </CardHeader>
+                    <CardContent><DeleteProjectDialog project={project} /></CardContent>
+                  </Card>
                 )}
               </aside>
             </div>

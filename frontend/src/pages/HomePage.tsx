@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import { Activity, ArrowUpRight, CalendarDays, Check, FolderKanban, ListTodo, LogOut, Plus, ShieldCheck, Target, Users, UserRound, X} from "lucide-react";
 import { GoalSyncBrand } from "@/components/GoalSyncBrand";
 import type { Task } from "@/components/tasks/CreateTaskDialog";
@@ -55,6 +55,7 @@ const formatDueDate = (dueDate: string) =>
 
 export function HomePage() {
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [user, setUser] = useState<User | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -571,6 +572,17 @@ export function HomePage() {
             </Card>
           </div>
         </section>
+
+        {location.state?.projectDeleted === true && (
+          <Alert role="status" className="mt-8">
+            <AlertDescription className="flex items-center justify-between gap-3">
+              Project deleted.
+              <Button variant="ghost" size="icon-sm" aria-label="Dismiss deletion notice" onClick={() => navigate("/home", { replace: true, state: null })}>
+                <X aria-hidden="true" />
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
 
         <section className="mt-8" aria-labelledby="projects-heading">
           <h3 id="projects-heading" className="mb-4 text-lg font-semibold">

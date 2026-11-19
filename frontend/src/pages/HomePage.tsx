@@ -599,6 +599,12 @@ export function HomePage() {
                       {project.name}
                     </CardTitle>
 
+                    {project.owner && project.ownerId !== user.id && (
+                      <p className="flex items-center gap-1.5 text-xs font-medium text-primary">
+                        <Users className="size-3.5" aria-hidden="true" /> Shared by {project.owner.name}
+                      </p>
+                    )}
+
                     <CardDescription className="whitespace-pre-wrap break-words">
                       {project.description || "No description yet."}
                     </CardDescription>

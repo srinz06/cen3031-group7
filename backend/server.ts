@@ -4,7 +4,12 @@ import bcrypt from "bcrypt";
 import session from "express-session";
 import { db } from "./src/prisma/db.js";
 import { validateProjectInput } from "./src/projects/validation.js";
-import { findOwnedProject, UUID_PATTERN } from "./src/projects/access.js";
+import {
+  accessibleProjectWhere,
+  findAccessibleProject,
+  findOwnedProject,
+  UUID_PATTERN,
+} from "./src/projects/access.js";
 import { pathToFileURL } from "node:url";
 import { requireAdmin } from "./src/admin/authorization.js";
 
@@ -415,8 +420,9 @@ app.get("/api/projects", async (req: Request, res: Response) => {
 
   try {
     const projects = await db.project.findMany({
-      where: {
-        ownerId: req.session.userId,
+      where: accessibleProjectWhere(req.session.userId),
+      include: {
+        owner: { select: { id: true, name: true } },
       },
       orderBy: {
         createdAt: "desc",
@@ -445,16 +451,31 @@ app.get("/api/projects/:id", async (req: Request<{ id: string }>, res: Response)
   }
 
   try {
-    const project = await db.project.findFirst({
-      where: { id: req.params.id, ownerId: req.session.userId },
-      select: { id: true, name: true, description: true, goal: true, targetDate: true },
+    const found = await db.project.findFirst({
+      where: { id: req.params.id, ...accessibleProjectWhere(req.session.userId) },
+      select: {
+        id: true, name: true, description: true, goal: true, targetDate: true, ownerId: true,
+        owner: { select: { id: true, name: true, email: true } },
+        collaborators: {
+          select: { user: { select: { id: true, name: true, email: true } } },
+          orderBy: { createdAt: "asc" },
+        },
+      },
     });
 
-    if (!project) {
+    if (!found) {
       return res.status(404).json({ message: "Project not found" });
     }
 
-    return res.status(200).json({ project });
+    const { ownerId, owner, collaborators, ...project } = found;
+
+    return res.status(200).json({
+      project,
+      isOwner: ownerId === req.session.userId,
+      viewerId: req.session.userId,
+      owner,
+      collaborators: collaborators.map((collaborator) => collaborator.user),
+    });
   } catch (error) {
     console.error("Project detail error:", error);
     return res.status(500).json({ message: "Unable to load project" });
@@ -490,6 +511,102 @@ app.put("/api/projects/:id", async (req: Request<{ id: string }>, res: Response)
     return res.status(500).json({ message: "Unable to update project" });
   }
 });
+
+// Only the owner can add collaborators, and only from their accepted friends.
+app.post("/api/projects/:id/collaborators", async (req: Request<{ id: string }>, res: Response) => {
+  const viewerId = req.session.userId;
+  if (!viewerId) {
+    return res.status(401).json({ message: "Not authenticated" });
+  }
+
+  if (!UUID_PATTERN.test(req.params.id)) {
+    return res.status(404).json({ message: "Project not found" });
+  }
+
+  const userId = req.body?.userId;
+  if (typeof userId !== "string" || !UUID_PATTERN.test(userId)) {
+    return res.status(400).json({ message: "A valid user ID is required" });
+  }
+
+  try {
+    const project = await findOwnedProject(req.params.id, viewerId);
+    if (!project) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+
+    if (userId === viewerId) {
+      return res.status(400).json({ message: "You already own this project" });
+    }
+
+    const friendship = await db.friendRequest.findFirst({
+      where: {
+        status: "accepted",
+        OR: [
+          { senderId: viewerId, receiverId: userId },
+          { senderId: userId, receiverId: viewerId },
+        ],
+      },
+      select: { id: true },
+    });
+
+    if (!friendship) {
+      return res.status(400).json({ message: "You can only add friends as collaborators" });
+    }
+
+    const collaborator = await db.projectCollaborator.create({
+      data: { projectId: project.id, userId },
+      select: { user: { select: { id: true, name: true, email: true } } },
+    });
+
+    return res.status(201).json({
+      message: `${collaborator.user.name} added as a collaborator`,
+      collaborator: collaborator.user,
+    });
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
+      return res.status(409).json({ message: "That friend is already a collaborator" });
+    }
+    console.error("Add collaborator error:", error);
+    return res.status(500).json({ message: "Unable to add collaborator" });
+  }
+});
+
+// The owner can remove anyone; a collaborator can remove themselves to leave.
+app.delete(
+  "/api/projects/:id/collaborators/:userId",
+  async (req: Request<{ id: string; userId: string }>, res: Response) => {
+    const viewerId = req.session.userId;
+    if (!viewerId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+
+    if (!UUID_PATTERN.test(req.params.id) || !UUID_PATTERN.test(req.params.userId)) {
+      return res.status(404).json({ message: "Collaborator not found" });
+    }
+
+    try {
+      const project = await findAccessibleProject(req.params.id, viewerId);
+      if (!project || (project.ownerId !== viewerId && req.params.userId !== viewerId)) {
+        return res.status(404).json({ message: "Collaborator not found" });
+      }
+
+      const result = await db.projectCollaborator.deleteMany({
+        where: { projectId: project.id, userId: req.params.userId },
+      });
+
+      if (result.count === 0) {
+        return res.status(404).json({ message: "Collaborator not found" });
+      }
+
+      return res.status(200).json({
+        message: req.params.userId === viewerId ? "You left the project" : "Collaborator removed",
+      });
+    } catch (error) {
+      console.error("Remove collaborator error:", error);
+      return res.status(500).json({ message: "Unable to remove collaborator" });
+    }
+  }
+);
 
 app.post("/api/projects", async (req: Request, res: Response) => {
   if (!req.session.userId) {
@@ -640,7 +757,7 @@ app.get("/api/tasks", async (req: Request, res: Response) => {
         return res.status(400).json({ message: "Project ID must be a valid UUID" });
       }
 
-      if (!(await findOwnedProject(projectId, req.session.userId))) {
+      if (!(await findAccessibleProject(projectId, req.session.userId))) {
         return res.status(404).json({ message: "Project not found" });
       }
     }
@@ -649,12 +766,16 @@ app.get("/api/tasks", async (req: Request, res: Response) => {
       return res.status(400).json({ message: "includeCompleted must be true or false" });
     }
 
+    // A project view shows everyone's tasks in that project; the default
+    // view is the user's own tasks across projects.
     const tasks = await db.task.findMany({
       where: {
-        userId: req.session.userId,
-        ...(typeof projectId === "string" ? { projectId } : {}),
+        ...(typeof projectId === "string" ? { projectId } : { userId: req.session.userId }),
         ...(includeCompleted === "true" ? {} : { completedAt: null }),
       },
+      ...(typeof projectId === "string"
+        ? { include: { user: { select: { id: true, name: true } } } }
+        : {}),
       orderBy: {
         createdAt: "desc",
       },
@@ -686,7 +807,7 @@ app.post("/api/tasks", async (req: Request, res: Response) => {
       return res.status(400).json({ message: "A valid project ID is required" });
     }
 
-    const project = await findOwnedProject(projectId, req.session.userId);
+    const project = await findAccessibleProject(projectId, req.session.userId);
 
     if (!project) {
       return res.status(404).json({ message: "Project not found" });

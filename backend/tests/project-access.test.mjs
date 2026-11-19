@@ -21,9 +21,12 @@ const project = {
 beforeEach(() => {
   storedProjects = [structuredClone(project), { ...structuredClone(project), id: otherProjectId, ownerId: otherId }];
   db.project.findFirst = mock.fn(async ({ where, select }) => {
-    const found = storedProjects
-      .find((candidate) => candidate.id === where.id && candidate.ownerId === where.ownerId);
-    return found ? Object.fromEntries(Object.keys(select).map((key) => [key, found[key]])) : null;
+    const found = storedProjects.find((candidate) => candidate.id === where.id && (where.ownerId !== undefined
+      ? candidate.ownerId === where.ownerId
+      : where.OR.some((clause) => clause.ownerId === candidate.ownerId)));
+    if (!found) return null;
+    const related = { owner: { id: found.ownerId, name: "Owner", email: "owner@example.com" }, collaborators: [] };
+    return Object.fromEntries(Object.keys(select).map((key) => [key, key in related ? related[key] : found[key]]));
   });
   db.project.update = mock.fn(async ({ where, data, select }) => {
     const found = storedProjects.find((candidate) => candidate.id === where.id && candidate.ownerId === where.ownerId);
@@ -63,10 +66,15 @@ test("project details reject malformed UUIDs without querying the database", asy
   assert.equal(db.project.findFirst.mock.callCount(), 0);
 });
 
-test("project details query by project ID and authenticated ownership", async () => {
+test("project details query by project ID and owner or collaborator access", async () => {
   const response = await request();
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(db.project.findFirst.mock.calls[0].arguments[0].where, { id: projectId, ownerId });
+  assert.deepEqual(db.project.findFirst.mock.calls[0].arguments[0].where, {
+    id: projectId,
+    OR: [{ ownerId }, { collaborators: { some: { userId: ownerId } } }],
+  });
+  assert.equal(response.body.isOwner, true);
+  assert.deepEqual(response.body.collaborators, []);
   assert.deepEqual(response.body.project, {
     id: project.id, name: project.name, description: project.description,
     goal: project.goal, targetDate: project.targetDate,

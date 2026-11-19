@@ -14,7 +14,14 @@ const taskId = "30000000-0000-0000-0000-000000000001";
 const completedId = "30000000-0000-0000-0000-000000000002";
 const otherTaskId = "30000000-0000-0000-0000-000000000003";
 const legacyTaskId = "30000000-0000-0000-0000-000000000004";
+const collaboratorId = "10000000-0000-0000-0000-000000000003";
 let tasks;
+
+// Mirrors accessibleProjectWhere: the owner or a listed collaborator matches.
+const canAccess = (project, where) => where.ownerId !== undefined
+  ? project.ownerId === where.ownerId
+  : where.OR.some((clause) => clause.ownerId === project.ownerId ||
+    project.collaboratorIds.includes(clause.collaborators?.some.userId));
 const originalMethods = {
   findFirst: db.project.findFirst,
   findMany: db.task.findMany,
@@ -31,11 +38,15 @@ beforeEach(() => {
     { id: legacyTaskId, userId: ownerId, projectId: null, completedAt: null },
   ];
   db.project.findFirst = mock.fn(async ({ where }) => {
-    const projects = [{ id: projectId, ownerId }, { id: otherProjectId, ownerId: otherId }];
-    return projects.find((project) => project.id === where.id && project.ownerId === where.ownerId) ?? null;
+    const projects = [
+      { id: projectId, ownerId, collaboratorIds: [collaboratorId] },
+      { id: otherProjectId, ownerId: otherId, collaboratorIds: [] },
+    ];
+    const found = projects.find((project) => project.id === where.id && canAccess(project, where));
+    return found ? { id: found.id, ownerId: found.ownerId } : null;
   });
   db.task.findMany = mock.fn(async ({ where }) => tasks.filter((task) =>
-    task.userId === where.userId &&
+    (where.userId === undefined || task.userId === where.userId) &&
     (where.projectId === undefined || task.projectId === where.projectId) &&
     (where.completedAt === undefined || task.completedAt === where.completedAt)
   ));
@@ -130,7 +141,42 @@ test("default GET preserves the personal open-task overview, including legacy un
 test("project filtering returns only the selected project's open tasks", async () => {
   const response = await request("get", "/api/tasks", { query: { projectId } });
   assert.deepEqual(response.body.tasks.map((task) => task.id), [taskId]);
-  assert.deepEqual(db.project.findFirst.mock.calls[0].arguments[0].where, { id: projectId, ownerId });
+  assert.deepEqual(db.project.findFirst.mock.calls[0].arguments[0].where, {
+    id: projectId,
+    OR: [{ ownerId }, { collaborators: { some: { userId: ownerId } } }],
+  });
+});
+
+test("a collaborator sees every member's tasks in a shared project", async () => {
+  tasks.push({ id: "collab-task", userId: collaboratorId, projectId, completedAt: null });
+  const response = await request("get", "/api/tasks", { userId: collaboratorId, query: { projectId } });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.body.tasks.map((task) => task.id), [taskId, "collab-task"]);
+  assert.deepEqual(db.task.findMany.mock.calls[0].arguments[0].include, { user: { select: { id: true, name: true } } });
+});
+
+test("a collaborator's default task list stays limited to their own tasks", async () => {
+  tasks.push({ id: "collab-task", userId: collaboratorId, projectId, completedAt: null });
+  const response = await request("get", "/api/tasks", { userId: collaboratorId });
+  assert.deepEqual(response.body.tasks.map((task) => task.id), ["collab-task"]);
+});
+
+test("a collaborator can create tasks in a shared project as themselves", async () => {
+  const response = await request("post", "/api/tasks", {
+    userId: collaboratorId, body: { projectId, title: "Draft slides", userId: ownerId },
+  });
+  assert.equal(response.statusCode, 201);
+  assert.equal(response.body.task.userId, collaboratorId);
+  assert.equal(response.body.task.projectId, projectId);
+});
+
+test("a collaborator cannot change the status of another member's task", async () => {
+  const before = structuredClone(tasks);
+  const response = await request("patch", "/api/tasks/:id/status", {
+    userId: collaboratorId, params: { id: taskId }, body: { status: "complete" },
+  });
+  assert.equal(response.statusCode, 404);
+  assert.deepEqual(tasks, before);
 });
 
 test("includeCompleted=true includes completed tasks for project progress", async () => {

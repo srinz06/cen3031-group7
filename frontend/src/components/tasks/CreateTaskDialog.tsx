@@ -29,6 +29,7 @@ export type Task = {
   completedAt: string | null;
   userId: string;
   projectId: string;
+  user?: { id: string; name: string };
 };
 
 type CreateTaskDialogProps = {

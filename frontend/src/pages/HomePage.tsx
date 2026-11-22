@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
-import { Activity, ArrowUpRight, CalendarDays, Check, FolderKanban, ListTodo, LogOut, Plus, ShieldCheck, Target, Users, UserRound, X} from "lucide-react";
+import { Activity, ArrowUpRight, CalendarDays, Check, FolderKanban, ListTodo, LogOut, Plus, ShieldCheck, Target, Users, X} from "lucide-react";
 import { GoalSyncBrand } from "@/components/GoalSyncBrand";
 import type { Task } from "@/components/tasks/CreateTaskDialog";
+import { EditNameDialog } from "@/components/profile/EditNameDialog";
 import type { Project } from "@/types/project";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -276,9 +277,10 @@ export function HomePage() {
               <p className="max-w-64 truncate text-xs text-muted-foreground">{user.email}</p>
             </div>
 
-            <div className="flex size-10 items-center justify-center rounded-full border border-primary/15 bg-primary/10 text-primary">
-              <UserRound className="size-5" />
-            </div>
+            <EditNameDialog
+              name={user.name}
+              onNameUpdated={(name) => setUser((current) => (current ? { ...current, name } : current))}
+            />
 
             <Dialog>
               <DialogTrigger render={<Button variant="outline" />}>
@@ -610,6 +612,12 @@ export function HomePage() {
                     <CardTitle className="break-words">
                       {project.name}
                     </CardTitle>
+
+                    {project.owner && project.ownerId !== user.id && (
+                      <p className="flex items-center gap-1.5 text-xs font-medium text-primary">
+                        <Users className="size-3.5" aria-hidden="true" /> Shared by {project.owner.name}
+                      </p>
+                    )}
 
                     <CardDescription className="whitespace-pre-wrap break-words">
                       {project.description || "No description yet."}

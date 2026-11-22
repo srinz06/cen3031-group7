@@ -208,9 +208,7 @@ app.get("/api/friends", async (req: Request, res: Response) => {
         sender: true,
         receiver: true,
       },
-      orderBy: {
-        createdAt: "desc",
-      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     });
 
     const friends = requests
@@ -260,15 +258,17 @@ app.post("/api/friends/requests", async (req: Request, res: Response) => {
       });
     }
 
-    const { email } = req.body;
-
-    const normalizedEmail =
-      typeof email === "string" ? email.trim().toLowerCase() : "";
+    const email = req.body?.email;
+    const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
 
     if (!normalizedEmail) {
       return res.status(400).json({
         message: "Email is required",
       });
+    }
+
+    if (normalizedEmail.length > 254 || !/^[^\s@]+@[^\s@]+$/.test(normalizedEmail)) {
+      return res.status(400).json({ message: "Enter a valid email address" });
     }
 
     const receiver = await db.user.findUnique({
@@ -289,62 +289,49 @@ app.post("/api/friends/requests", async (req: Request, res: Response) => {
       });
     }
 
-    const existing = await db.friendRequest.findFirst({
-      where: {
-        OR: [
-          { senderId: userId, receiverId: receiver.id },
-          { senderId: receiver.id, receiverId: userId },
-        ],
-      },
-    });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const result = await db.$transaction(async (tx) => {
+          const requests = await tx.friendRequest.findMany({
+            where: {
+              OR: [
+                { senderId: userId, receiverId: receiver.id },
+                { senderId: receiver.id, receiverId: userId },
+              ],
+            },
+            orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          });
+          const existing = requests.find((request) => request.status === "accepted")
+            ?? requests.find((request) => request.status === "pending")
+            ?? requests[0];
 
-    if (existing?.status === "accepted") {
-      return res.status(409).json({
-        message: `You're already friends with ${receiver.name}`,
-      });
+          if (existing?.status === "accepted") {
+            return { status: 409, message: `You're already friends with ${receiver.name}` };
+          }
+          if (existing?.status === "pending" && existing.senderId === userId) {
+            return { status: 409, message: `You already sent ${receiver.name} a friend request` };
+          }
+          if (existing?.status === "pending") {
+            await tx.friendRequest.update({ where: { id: existing.id }, data: { status: "accepted" } });
+            return { status: 200, message: `You and ${receiver.name} are now friends` };
+          }
+          if (existing) {
+            await tx.friendRequest.update({
+              where: { id: existing.id },
+              data: { status: "pending", senderId: userId, receiverId: receiver.id, createdAt: new Date() },
+            });
+          } else {
+            await tx.friendRequest.create({ data: { senderId: userId, receiverId: receiver.id } });
+          }
+          return { status: 201, message: `Friend request sent to ${receiver.name}` };
+        }, { isolationLevel: "Serializable" });
+        return res.status(result.status).json({ message: result.message });
+      } catch (error) {
+        const retryable = error && typeof error === "object" && "code" in error
+          && (error.code === "P2034" || error.code === "P2002");
+        if (!retryable || attempt === 2) throw error;
+      }
     }
-
-    if (existing?.status === "pending" && existing.senderId === userId) {
-      return res.status(409).json({
-        message: `You already sent ${receiver.name} a friend request`,
-      });
-    }
-
-    // They already invited us, so adding them back accepts it.
-    if (existing?.status === "pending") {
-      await db.friendRequest.update({
-        where: { id: existing.id },
-        data: { status: "accepted" },
-      });
-
-      return res.status(200).json({
-        message: `You and ${receiver.name} are now friends`,
-      });
-    }
-
-    // A declined request can be sent again.
-    if (existing) {
-      await db.friendRequest.update({
-        where: { id: existing.id },
-        data: {
-          status: "pending",
-          senderId: userId,
-          receiverId: receiver.id,
-          createdAt: new Date(),
-        },
-      });
-    } else {
-      await db.friendRequest.create({
-        data: {
-          senderId: userId,
-          receiverId: receiver.id,
-        },
-      });
-    }
-
-    return res.status(201).json({
-      message: `Friend request sent to ${receiver.name}`,
-    });
   } catch (error) {
     console.error("Friend request error:", error);
 
@@ -368,32 +355,26 @@ app.post(
 
       const { id, action } = req.params;
 
+      if (typeof id !== "string" || !UUID_PATTERN.test(id)) {
+        return res.status(404).json({ message: "Friend request not found" });
+      }
+
       if (action !== "accept" && action !== "decline") {
         return res.status(400).json({
           message: "Action must be accept or decline",
         });
       }
 
-      const request = await db.friendRequest.findUnique({
-        where: {
-          id: String(id),
-        },
+      const result = await db.friendRequest.updateMany({
+        where: { id, receiverId: userId, status: "pending" },
+        data: { status: action === "accept" ? "accepted" : "declined" },
       });
 
-      if (
-        !request ||
-        request.receiverId !== userId ||
-        request.status !== "pending"
-      ) {
+      if (result.count === 0) {
         return res.status(404).json({
           message: "Friend request not found",
         });
       }
-
-      await db.friendRequest.update({
-        where: { id: request.id },
-        data: { status: action === "accept" ? "accepted" : "declined" },
-      });
 
       return res.status(200).json({
         message:
@@ -410,6 +391,35 @@ app.post(
     }
   }
 );
+
+app.delete("/api/friends/:id", async (req: Request<{ id: string }>, res: Response) => {
+  if (!req.session.userId) {
+    return res.status(401).json({ message: "Not authenticated" });
+  }
+  if (!UUID_PATTERN.test(req.params.id)) {
+    return res.status(404).json({ message: "Friendship not found" });
+  }
+  const userId = req.session.userId;
+  const friendId = req.params.id;
+  try {
+    const result = await db.friendRequest.deleteMany({
+      where: {
+        status: "accepted",
+        OR: [
+          { senderId: userId, receiverId: friendId },
+          { senderId: friendId, receiverId: userId },
+        ],
+      },
+    });
+    if (result.count === 0) {
+      return res.status(404).json({ message: "Friendship not found" });
+    }
+    return res.status(200).json({ message: "Friend removed" });
+  } catch (error) {
+    console.error("Friend removal error:", error);
+    return res.status(500).json({ message: "Unable to remove friend" });
+  }
+});
 
 app.get("/api/projects", async (req: Request, res: Response) => {
   if (!req.session.userId) {

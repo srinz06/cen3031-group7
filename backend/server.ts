@@ -4,6 +4,7 @@ import bcrypt from "bcrypt";
 import session from "express-session";
 import { db } from "./src/prisma/db.js";
 import { validateProjectInput } from "./src/projects/validation.js";
+import { validateTaskInput } from "./src/tasks/validation.js";
 import {
   accessibleProjectWhere,
   findAccessibleProject,
@@ -803,8 +804,6 @@ app.patch("/api/admin/users/:id/role", requireAdmin, async (req: Request<{ id: s
   }
 });
 
-const TASK_PRIORITIES = ["low", "medium", "high"];
-
 app.get("/api/tasks", async (req: Request, res: Response) => {
   try {
     if (!req.session.userId) {
@@ -867,7 +866,7 @@ app.post("/api/tasks", async (req: Request, res: Response) => {
       });
     }
 
-    const { title, description, dueDate, priority, projectId } = req.body ?? {};
+    const { projectId } = req.body ?? {};
 
     if (typeof projectId !== "string" || !UUID_PATTERN.test(projectId)) {
       return res.status(400).json({ message: "A valid project ID is required" });
@@ -879,43 +878,17 @@ app.post("/api/tasks", async (req: Request, res: Response) => {
       return res.status(404).json({ message: "Project not found" });
     }
 
-    const trimmedTitle = typeof title === "string" ? title.trim() : "";
+    const result = validateTaskInput(req.body);
 
-    if (!trimmedTitle) {
+    if (result.error !== undefined) {
       return res.status(400).json({
-        message: "Task title is required",
+        message: result.error,
       });
     }
-
-    const taskPriority = priority || "medium";
-
-    if (!TASK_PRIORITIES.includes(taskPriority)) {
-      return res.status(400).json({
-        message: "Priority must be low, medium, or high",
-      });
-    }
-
-    let taskDueDate: Date | null = null;
-
-    if (dueDate) {
-      taskDueDate = new Date(dueDate);
-
-      if (Number.isNaN(taskDueDate.getTime())) {
-        return res.status(400).json({
-          message: "Due date is invalid",
-        });
-      }
-    }
-
-    const trimmedDescription =
-      typeof description === "string" ? description.trim() : "";
 
     const task = await db.task.create({
       data: {
-        title: trimmedTitle,
-        description: trimmedDescription || null,
-        dueDate: taskDueDate,
-        priority: taskPriority,
+        ...result.data,
         userId: req.session.userId,
         projectId: project.id,
       },
@@ -934,6 +907,40 @@ app.post("/api/tasks", async (req: Request, res: Response) => {
   }
 });
 
+// Only the task's creator can edit it, and only while they can still open its
+// project. The task's owner, project, and completion state are never changed here.
+app.put("/api/tasks/:id", async (req: Request<{ id: string }>, res: Response) => {
+  if (!req.session.userId) {
+    return res.status(401).json({ message: "Not authenticated" });
+  }
+  if (!UUID_PATTERN.test(req.params.id)) {
+    return res.status(404).json({ message: "Task not found" });
+  }
+
+  const result = validateTaskInput(req.body);
+  if (result.error !== undefined) {
+    return res.status(400).json({ message: result.error });
+  }
+
+  try {
+    const task = await db.task.update({
+      where: {
+        id: req.params.id,
+        userId: req.session.userId,
+        project: accessibleProjectWhere(req.session.userId),
+      },
+      data: result.data,
+    });
+    return res.status(200).json({ message: "Task updated", task });
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "P2025") {
+      return res.status(404).json({ message: "Task not found" });
+    }
+    console.error("Task update error:", error);
+    return res.status(500).json({ message: "Unable to update task" });
+  }
+});
+
 app.patch("/api/tasks/:id/status", async (req: Request<{ id: string }>, res: Response) => {
   if (!req.session.userId) {
     return res.status(401).json({ message: "Not authenticated" });
@@ -949,7 +956,11 @@ app.patch("/api/tasks/:id/status", async (req: Request<{ id: string }>, res: Res
 
   try {
     const task = await db.task.update({
-      where: { id: req.params.id, userId: req.session.userId },
+      where: {
+        id: req.params.id,
+        userId: req.session.userId,
+        project: accessibleProjectWhere(req.session.userId),
+      },
       data: { completedAt: status === "complete" ? new Date() : null },
     });
     return res.status(200).json({ message: status === "complete" ? "Task completed" : "Task moved to to do", task });
@@ -982,6 +993,7 @@ app.patch(
         where: {
           id: req.params.id,
           userId: req.session.userId,
+          project: accessibleProjectWhere(req.session.userId),
           completedAt: null,
         },
         data: {

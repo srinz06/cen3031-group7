@@ -13,11 +13,9 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { TaskFormFields, type TaskFormValues, type TaskPriority } from "@/components/tasks/TaskFormFields";
 
-export type TaskPriority = "low" | "medium" | "high";
+export type { TaskPriority };
 
 export type Task = {
   id: string;
@@ -37,20 +35,16 @@ type CreateTaskDialogProps = {
   onTaskCreated: (task: Task) => void;
 };
 
+const emptyTask: TaskFormValues = { title: "", description: "", dueDate: "", priority: "medium" };
+
 export function CreateTaskDialog({ projectId, onTaskCreated }: CreateTaskDialogProps) {
   const [open, setOpen] = useState(false);
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [dueDate, setDueDate] = useState("");
-  const [priority, setPriority] = useState<TaskPriority>("medium");
+  const [values, setValues] = useState<TaskFormValues>(emptyTask);
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const resetForm = () => {
-    setTitle("");
-    setDescription("");
-    setDueDate("");
-    setPriority("medium");
+    setValues(emptyTask);
     setMessage("");
   };
 
@@ -76,10 +70,8 @@ export function CreateTaskDialog({ projectId, onTaskCreated }: CreateTaskDialogP
         },
         credentials: "include",
         body: JSON.stringify({
-          title,
-          description,
-          dueDate: dueDate || null,
-          priority,
+          ...values,
+          dueDate: values.dueDate || null,
           projectId,
         }),
       });
@@ -120,55 +112,7 @@ export function CreateTaskDialog({ projectId, onTaskCreated }: CreateTaskDialogP
         </DialogHeader>
 
         <form onSubmit={handleCreateTask} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="task-title">Title</Label>
-            <Input
-              id="task-title"
-              type="text"
-              placeholder="What needs to be done?"
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              required
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="task-description">Description</Label>
-            <Textarea
-              id="task-description"
-              placeholder="Add any details (optional)"
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-            />
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="task-due-date">Due date</Label>
-              <Input
-                id="task-due-date"
-                type="date"
-                value={dueDate}
-                onChange={(event) => setDueDate(event.target.value)}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="task-priority">Priority</Label>
-              <select
-                id="task-priority"
-                value={priority}
-                onChange={(event) =>
-                  setPriority(event.target.value as TaskPriority)
-                }
-                className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm dark:bg-input/30"
-              >
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-              </select>
-            </div>
-          </div>
+          <TaskFormFields idPrefix="task" values={values} onChange={setValues} />
 
           {message && (
             <Alert variant="destructive" role="alert">

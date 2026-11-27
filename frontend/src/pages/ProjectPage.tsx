@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { ArrowLeft, CalendarDays, Check, Circle, FolderKanban, ListTodo, LoaderCircle, Target } from "lucide-react";
+import { ArrowLeft, CalendarDays, Check, Circle, FolderKanban, ListTodo, LoaderCircle, Target, TrendingUp } from "lucide-react";
 import { GoalSyncBrand } from "@/components/GoalSyncBrand";
 import { EditProjectDialog } from "@/components/projects/EditProjectDialog";
 import { DeleteProjectDialog } from "@/components/projects/DeleteProjectDialog";
 import { ProjectCollaborators } from "@/components/projects/ProjectCollaborators";
 import { CreateTaskDialog, type Task } from "@/components/tasks/CreateTaskDialog";
+import { EditTaskDialog } from "@/components/tasks/EditTaskDialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -137,6 +138,10 @@ function ProjectWorkspace({ projectId }: { projectId: string | undefined }) {
     }
   };
 
+  // Progress counts every task in the project, from all members.
+  const completedCount = tasks.filter((task) => task.completedAt).length;
+  const progressPercent = tasks.length === 0 ? 0 : Math.round((completedCount / tasks.length) * 100);
+
   return (
     <main className="min-h-screen bg-background text-foreground">
       <header className="border-b bg-card/90">
@@ -249,6 +254,11 @@ function ProjectWorkspace({ projectId }: { projectId: string | undefined }) {
                                   <option value="todo">To do</option>
                                   <option value="complete">Complete</option>
                                 </select>
+                                <EditTaskDialog task={task} onTaskUpdated={(updated) => {
+                                  setTasks((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+                                  setNotice(`Updated: ${updated.title}`);
+                                  setActionError("");
+                                }} />
                               </div>
                               )}
                             </div>
@@ -265,6 +275,32 @@ function ProjectWorkspace({ projectId }: { projectId: string | undefined }) {
                   <CardHeader><CardTitle>Project details</CardTitle></CardHeader>
                   <CardContent className="space-y-6">
                     <div>
+                      <h2 id="project-progress-heading" className="mb-2 flex items-center gap-2 text-sm font-semibold"><TrendingUp className="size-4 text-primary" aria-hidden="true" /> Progress</h2>
+                      {tasksError ? (
+                        <p className="text-sm text-muted-foreground">Progress is unavailable until tasks load.</p>
+                      ) : tasks.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">Add tasks to start tracking progress.</p>
+                      ) : (
+                        <>
+                          <div
+                            role="progressbar"
+                            aria-labelledby="project-progress-heading"
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-valuenow={progressPercent}
+                            aria-valuetext={`${completedCount} of ${tasks.length} tasks complete`}
+                            className="h-2 overflow-hidden rounded-full bg-muted"
+                          >
+                            <div className="h-full rounded-full bg-primary transition-[width] duration-300" style={{ width: `${progressPercent}%` }} />
+                          </div>
+                          <p className="mt-2 flex justify-between gap-2 text-sm text-muted-foreground">
+                            <span>{completedCount} of {tasks.length} {tasks.length === 1 ? "task" : "tasks"} complete</span>
+                            <span className="font-medium tabular-nums text-foreground">{progressPercent}%</span>
+                          </p>
+                        </>
+                      )}
+                    </div>
+                    <div className="border-t pt-5">
                       <h2 className="mb-2 flex items-center gap-2 text-sm font-semibold"><Target className="size-4 text-primary" aria-hidden="true" /> Goal</h2>
                       <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">{project.goal || "No goal set yet."}</p>
                     </div>

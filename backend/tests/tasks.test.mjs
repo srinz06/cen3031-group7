@@ -22,6 +22,16 @@ const canAccess = (project, where) => where.ownerId !== undefined
   ? project.ownerId === where.ownerId
   : where.OR.some((clause) => clause.ownerId === project.ownerId ||
     project.collaboratorIds.includes(clause.collaborators?.some.userId));
+// formerId used to collaborate on projectId and still has a task there.
+const formerId = "10000000-0000-0000-0000-000000000004";
+const formerTaskId = "30000000-0000-0000-0000-000000000005";
+const projects = [
+  { id: projectId, ownerId, collaboratorIds: [collaboratorId] },
+  { id: otherProjectId, ownerId: otherId, collaboratorIds: [] },
+];
+// Mirrors a Prisma relation filter on the task's project; no filter matches everything.
+const inAccessibleProject = (task, where) => where === undefined ||
+  projects.some((project) => project.id === task.projectId && canAccess(project, where));
 const originalMethods = {
   findFirst: db.project.findFirst,
   findMany: db.task.findMany,
@@ -38,10 +48,6 @@ beforeEach(() => {
     { id: legacyTaskId, userId: ownerId, projectId: null, completedAt: null },
   ];
   db.project.findFirst = mock.fn(async ({ where }) => {
-    const projects = [
-      { id: projectId, ownerId, collaboratorIds: [collaboratorId] },
-      { id: otherProjectId, ownerId: otherId, collaboratorIds: [] },
-    ];
     const found = projects.find((project) => project.id === where.id && canAccess(project, where));
     return found ? { id: found.id, ownerId: found.ownerId } : null;
   });
@@ -57,7 +63,8 @@ beforeEach(() => {
     return { count: matching.length };
   });
   db.task.update = mock.fn(async ({ where, data }) => {
-    const task = tasks.find((item) => item.id === where.id && item.userId === where.userId);
+    const task = tasks.find((item) => item.id === where.id && item.userId === where.userId &&
+      inAccessibleProject(item, where.project));
     if (!task) throw Object.assign(new Error("Record not found"), { code: "P2025" });
     return Object.assign(task, data);
   });
@@ -83,7 +90,7 @@ async function request(method, path, { userId = ownerId, query = {}, body = {}, 
 }
 
 test("all task routes reject an unauthenticated user before querying the database", async () => {
-  for (const [method, path] of [["get", "/api/tasks"], ["post", "/api/tasks"], ["patch", "/api/tasks/:id/complete"], ["patch", "/api/tasks/:id/status"]]) {
+  for (const [method, path] of [["get", "/api/tasks"], ["post", "/api/tasks"], ["put", "/api/tasks/:id"], ["patch", "/api/tasks/:id/complete"], ["patch", "/api/tasks/:id/status"]]) {
     assert.equal((await request(method, path, { userId: null })).statusCode, 401);
   }
   assert.equal(db.project.findFirst.mock.callCount(), 0);
@@ -296,7 +303,10 @@ test("status updates ignore client-supplied ownership, project, and completion t
   });
   assert.equal(response.statusCode, 200);
   const args = db.task.update.mock.calls[0].arguments[0];
-  assert.deepEqual(args.where, { id: taskId, userId: ownerId });
+  assert.deepEqual(args.where, {
+    id: taskId, userId: ownerId,
+    project: { OR: [{ ownerId }, { collaborators: { some: { userId: ownerId } } }] },
+  });
   assert.deepEqual(Object.keys(args.data), ["completedAt"]);
   assert.ok(args.data.completedAt instanceof Date);
   assert.equal(response.body.task.userId, ownerId);
@@ -310,4 +320,101 @@ test("status update failures return a safe error", async (context) => {
   const response = await request("patch", "/api/tasks/:id/status", { params: { id: taskId }, body: { status: "todo" } });
   assert.equal(response.statusCode, 500);
   assert.deepEqual(response.body, { message: "Unable to update task status" });
+});
+
+test("the task owner can edit title, description, due date, and priority", async () => {
+  const response = await request("put", "/api/tasks/:id", {
+    params: { id: taskId },
+    body: { title: "  Revised  ", description: "  New details  ", dueDate: "2026-12-15", priority: "high" },
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.task.title, "Revised");
+  assert.equal(response.body.task.description, "New details");
+  assert.deepEqual(response.body.task.dueDate, new Date("2026-12-15T00:00:00.000Z"));
+  assert.equal(response.body.task.priority, "high");
+  assert.equal(tasks[0].title, "Revised");
+});
+
+test("editing can clear the description and due date and defaults the priority", async () => {
+  Object.assign(tasks[0], { description: "Old", dueDate: new Date("2026-12-01"), priority: "high" });
+  const response = await request("put", "/api/tasks/:id", {
+    params: { id: taskId }, body: { title: "Task", description: "", dueDate: null },
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.task.description, null);
+  assert.equal(response.body.task.dueDate, null);
+  assert.equal(response.body.task.priority, "medium");
+});
+
+test("editing ignores client-supplied ownership, project, and completion fields", async () => {
+  const response = await request("put", "/api/tasks/:id", {
+    params: { id: completedId },
+    body: { title: "Renamed", userId: otherId, projectId: otherProjectId, completedAt: null, id: otherTaskId },
+  });
+  assert.equal(response.statusCode, 200);
+  const args = db.task.update.mock.calls[0].arguments[0];
+  assert.deepEqual(args.where, {
+    id: completedId, userId: ownerId,
+    project: { OR: [{ ownerId }, { collaborators: { some: { userId: ownerId } } }] },
+  });
+  assert.deepEqual(Object.keys(args.data).sort(), ["description", "dueDate", "priority", "title"]);
+  assert.equal(response.body.task.userId, ownerId);
+  assert.equal(response.body.task.projectId, projectId);
+  assert.ok(response.body.task.completedAt instanceof Date, "editing must not reopen a completed task");
+});
+
+test("editing rejects invalid input before writing", async () => {
+  const before = structuredClone(tasks);
+  for (const body of [
+    null, {}, { title: " " }, { title: 42 }, { title: "Task", priority: "urgent" },
+    { title: "Task", dueDate: "invalid" }, { title: "Task", dueDate: "2026-02-30" },
+    { title: "Task", dueDate: "12/01/2026" }, { title: "Task", dueDate: 1764547200000 },
+  ]) {
+    assert.equal((await request("put", "/api/tasks/:id", { params: { id: taskId }, body })).statusCode, 400);
+  }
+  assert.equal(db.task.update.mock.callCount(), 0);
+  assert.deepEqual(tasks, before);
+});
+
+test("editing cannot modify another user's task, a collaborator's task, or a missing task", async () => {
+  const before = structuredClone(tasks);
+  for (const [userId, id] of [[ownerId, otherTaskId], [collaboratorId, taskId], [ownerId, missingProjectId], [ownerId, "invalid"]]) {
+    const response = await request("put", "/api/tasks/:id", { userId, params: { id }, body: { title: "Hijacked" } });
+    assert.equal(response.statusCode, 404);
+  }
+  assert.deepEqual(tasks, before);
+});
+
+test("a former collaborator can no longer edit or change the status of their old tasks", async () => {
+  tasks.push({ id: formerTaskId, userId: formerId, projectId, completedAt: null, title: "Old work" });
+  const before = structuredClone(tasks);
+  const edit = await request("put", "/api/tasks/:id", { userId: formerId, params: { id: formerTaskId }, body: { title: "Changed" } });
+  assert.equal(edit.statusCode, 404);
+  for (const status of ["complete", "todo"]) {
+    const response = await request("patch", "/api/tasks/:id/status", { userId: formerId, params: { id: formerTaskId }, body: { status } });
+    assert.equal(response.statusCode, 404);
+  }
+  assert.deepEqual(tasks, before);
+});
+
+test("legacy completion only matches tasks in projects the user can still open", async () => {
+  await request("patch", "/api/tasks/:id/complete", { params: { id: taskId } });
+  assert.deepEqual(db.task.updateMany.mock.calls[0].arguments[0].where.project, {
+    OR: [{ ownerId }, { collaborators: { some: { userId: ownerId } } }],
+  });
+});
+
+test("creation now rejects non-calendar and non-ISO due dates", async () => {
+  for (const dueDate of ["2026-02-30", "12/01/2026", "2026-12-01T10:00:00Z", 1764547200000, true]) {
+    assert.equal((await request("post", "/api/tasks", { body: { projectId, title: "Task", dueDate } })).statusCode, 400);
+  }
+  assert.equal(db.task.create.mock.callCount(), 0);
+});
+
+test("task update failures return a safe error", async (context) => {
+  context.mock.method(console, "error", () => {});
+  db.task.update = mock.fn(async () => { throw new Error("private database details"); });
+  const response = await request("put", "/api/tasks/:id", { params: { id: taskId }, body: { title: "Task" } });
+  assert.equal(response.statusCode, 500);
+  assert.deepEqual(response.body, { message: "Unable to update task" });
 });
